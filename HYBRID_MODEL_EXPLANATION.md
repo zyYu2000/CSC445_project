@@ -17,7 +17,6 @@ Input Features
     ├─ Travel Times (T_t)
     ├─ Precedence Constraints
     └─ Robot Skills (Q)
-    │
     ▼
 ┌─────────────────────────────────────────────────────────┐
 │              Node Feature Encoder                       │
@@ -25,54 +24,38 @@ Input Features
 └─────────────────────────────────────────────────────────┘
     │
     ├──────────────────────┬──────────────────────┐
-    │                      │                      │
     ▼                      ▼                      ▼
-┌─────────────┐    ┌──────────────┐    ┌──────────────┐
-│   GNN       │    │ Transformer  │    │   Robot      │
-│   Branch    │    │   Branch     │    │   Encoder    │
-│             │    │              │    │              │
-│ Local task  │    │ Global task  │    │ Robot skills │
-│ relations   │    │ ordering     │    │              │
-│             │    │              │    │              │
-│ • Precedence│    │ • Self-      │    │              │
-│ • Travel    │    │   attention  │    │              │
-│   times     │    │ • Positional │    │              │
-│             │    │   encoding   │    │              │
-└─────────────┘    └──────────────┘    └──────────────┘
-    │                      │                        │
-    └──────────┬───────────┘                        │
-               │                                    │
-               ▼                                    │
-        ┌──────────────┐                            │
-        │  Fusion      │                            │
-        │  Layer       │                            │
-        │  (Concat +   │                            │
-        │   MLP)       │                            │
-        └──────────────┘                            │
-               │                                    │
-               ▼                                    │
-        ┌──────────────┐                            │
-        │ Attention-   │                            │
-        │ based Pooling│                            │
-        │ (Graph-level)│                            │
-        └──────────────┘                            │
-               │                                    │
-               └──────────┬─────────────────────────┘
-                          │
+┌───────────────┐    ┌──────────────────────┐    ┌─────────────────┐
+│   GNN Branch  |    │  Transformer Branch  │    │   Robot Encoder │
+│               │    │                      │    │                 │
+│   Local task  │    │ Global task ordering │    │   Robot skills  │
+│   relations   │    │                      |    |                 |
+│               │    | • Self-attention     |    |                 |
+│ • Precedence  │    │ • Positional encoding│    │                 │
+│ • Travel times|    |                      |    |                 |
+└───────────────┘    └──────────────────────┘    └─────────────────┘
+       └──────────┬──────────────┘                        │
+                  ▼                                       │
+        ┌───────────────────┐                             │
+        │  Fusion Layer     │                             │
+        │  (Concat + MLP)   │                             │
+        └─────────┬─────────┘                             │
+                  ▼                                       │
+        ┌───────────────────────────┐                     │
+        │ Attention-based Pooling   │                     │
+        │     (Graph-level)         │                     │
+        └───────────────────────────┘                     │
+                  └──────────┬────────────────────────────┘
+                             ▼
+                  ┌───────────────────────────┐
+                  │  Concatenate All Features │
+                  └──────────┬────────────────┘
+                             ▼
+                  ┌────────────────────┐
+                  │   Predictor (MLP)  │
+                  └───────┬────────────┘
                           ▼
-                  ┌──────────────┐
-                  │  Concatenate │
-                  │  All Features│
-                  └──────────────┘
-                          │
-                          ▼
-                  ┌──────────────┐
-                  │   Predictor  │
-                  │   (MLP)      │
-                  └──────────────┘
-                          │
-                          ▼
-                    Makespan
+                      Makespan
 ```
 
 ## Key Components
