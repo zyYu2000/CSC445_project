@@ -388,8 +388,13 @@ def train_model(model, train_loader, val_loader, num_epochs=50, lr=0.001, device
     """Train the model"""
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
-                                                      factor=0.5, patience=5, verbose=True)
+    # ReduceLROnPlateau in this environment doesn't support the verbose flag
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode='min',
+        factor=0.5,
+        patience=5
+    )
     
     train_losses = []
     val_losses = []
@@ -430,7 +435,12 @@ def train_model(model, train_loader, val_loader, num_epochs=50, lr=0.001, device
         val_loss /= len(val_loader)
         val_losses.append(val_loss)
         
+        # Log LR changes manually since verbose scheduler output isn't available
+        prev_lr = optimizer.param_groups[0]['lr']
         scheduler.step(val_loss)
+        new_lr = optimizer.param_groups[0]['lr']
+        if new_lr < prev_lr:
+            print(f'  -> Learning rate reduced from {prev_lr:.6f} to {new_lr:.6f}')
         
         print(f'Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}')
         
@@ -497,91 +507,3 @@ def plot_training_curves(train_losses, val_losses):
     plt.grid(True)
     plt.savefig('training_curves.png')
     print('Saved training curves to training_curves.png')
-
-
-def main():
-    """Main training script"""
-    # Configuration
-    DATA_DIR = 'dataset_optimal_8t3r3s'
-    MAX_SAMPLES = 5000  # Increased for better training (set to None for all)
-    BATCH_SIZE = 32
-    NUM_EPOCHS = 30  # Increased for better training
-    LEARNING_RATE = 0.001
-    HIDDEN_DIM = 256  # Increased for better capacity
-    NUM_LAYERS = 4  # Increased for better capacity
-    DROPOUT = 0.3
-    MAX_TASKS = 10
-    MAX_ROBOTS = 8
-    MAX_SKILLS = 3
-    
-    # Set device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f'Using device: {device}')
-    
-    # Load dataset
-    print('Loading dataset...')
-    problem_files, solution_files = load_dataset(DATA_DIR, max_samples=MAX_SAMPLES)
-    
-    if len(problem_files) == 0:
-        print("No matched problem-solution pairs found!")
-        return
-    
-    # Split dataset
-    train_probs, test_probs, train_sols, test_sols = train_test_split(
-        problem_files, solution_files, test_size=0.2, random_state=42
-    )
-    train_probs, val_probs, train_sols, val_sols = train_test_split(
-        train_probs, train_sols, test_size=0.2, random_state=42
-    )
-    
-    print(f'Train: {len(train_probs)}, Val: {len(val_probs)}, Test: {len(test_probs)}')
-    
-    # Create datasets
-    train_dataset = MRTADataset(train_probs, train_sols, MAX_TASKS, MAX_ROBOTS, MAX_SKILLS)
-    val_dataset = MRTADataset(val_probs, val_sols, MAX_TASKS, MAX_ROBOTS, MAX_SKILLS)
-    test_dataset = MRTADataset(test_probs, test_sols, MAX_TASKS, MAX_ROBOTS, MAX_SKILLS)
-    
-    # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
-    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
-    
-    # Create model
-    model = MRTANetwork(
-        max_tasks=MAX_TASKS,
-        max_robots=MAX_ROBOTS,
-        max_skills=MAX_SKILLS,
-        hidden_dim=HIDDEN_DIM,
-        num_layers=NUM_LAYERS,
-        dropout=DROPOUT
-    )
-    
-    print(f'\nModel architecture:')
-    print(model)
-    total_params = sum(p.numel() for p in model.parameters())
-    print(f'Total parameters: {total_params:,}')
-    
-    # Train model
-    print('\nStarting training...')
-    train_losses, val_losses = train_model(
-        model, train_loader, val_loader, 
-        num_epochs=NUM_EPOCHS, lr=LEARNING_RATE, device=device
-    )
-    
-    # Plot training curves
-    plot_training_curves(train_losses, val_losses)
-    
-    # Load best model and evaluate
-    print('\nLoading best model for evaluation...')
-    model.load_state_dict(torch.load('best_mrta_model.pth'))
-    
-    # Evaluate on test set
-    print('\nEvaluating on test set...')
-    predictions, targets, metrics = evaluate_model(model, test_loader, device=device)
-    
-    print('\nTraining completed!')
-
-
-if __name__ == '__main__':
-    main()
-

@@ -240,6 +240,9 @@ class MRTAGNNTransformerNetwork(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden_dim // 4, 1)
         )
+        
+        # Static identity matrix for masking/self-loops
+        self.register_buffer('task_eye', torch.eye(max_tasks))
     
     def forward(self, x):
         R = x['R']  # (batch, max_tasks, max_skills)
@@ -253,10 +256,31 @@ class MRTAGNNTransformerNetwork(nn.Module):
         aggregate_features = x['aggregate_features']  # (batch, 16)
         
         batch_size = R.size(0)
+        eps = 1e-6
+        
+        # ========== Feature Normalization ==========
+        
+        # Normalize execution times with task mask support
+        task_counts = task_mask.sum(dim=1, keepdim=True).clamp(min=1.0)
+        te_mean = (T_e * task_mask).sum(dim=1, keepdim=True) / task_counts
+        te_var = (((T_e - te_mean) * task_mask) ** 2).sum(dim=1, keepdim=True) / task_counts
+        T_e_norm = ((T_e - te_mean) / torch.sqrt(te_var + eps)) * task_mask
+        
+        # Normalize task coordinates
+        loc_mask = task_mask.unsqueeze(-1)
+        loc_counts = loc_mask.sum(dim=1, keepdim=True).clamp(min=1.0)
+        loc_mean = (task_locations * loc_mask).sum(dim=1, keepdim=True) / loc_counts
+        loc_var = (((task_locations - loc_mean) * loc_mask) ** 2).sum(dim=1, keepdim=True) / loc_counts
+        task_locations_norm = ((task_locations - loc_mean) / torch.sqrt(loc_var + eps)) * loc_mask
+        
+        # Normalize aggregate features (per sample)
+        agg_mean = aggregate_features.mean(dim=1, keepdim=True)
+        agg_std = aggregate_features.std(dim=1, keepdim=True, unbiased=False) + eps
+        aggregate_features_norm = (aggregate_features - agg_mean) / agg_std
         
         # ========== Build Node Features ==========
-        T_e_expanded = T_e.unsqueeze(-1)  # (batch, max_tasks, 1)
-        node_features = torch.cat([R, T_e_expanded, task_locations], dim=-1)  # (batch, max_tasks, max_skills+3)
+        T_e_expanded = T_e_norm.unsqueeze(-1)  # (batch, max_tasks, 1)
+        node_features = torch.cat([R, T_e_expanded, task_locations_norm], dim=-1)  # (batch, max_tasks, max_skills+3)
         
         # Initial node embeddings
         node_embeddings = self.node_encoder(node_features)  # (batch, max_tasks, hidden_dim)
@@ -266,7 +290,16 @@ class MRTAGNNTransformerNetwork(nn.Module):
         # Build adjacency matrix from precedence and travel times
         # Precedence creates directed edges
         # Travel times create weighted edges
-        T_t_normalized = F.softmax(-T_t / (T_t.max(dim=-1, keepdim=True)[0] + 1e-8), dim=-1)
+        max_tt = T_t.max(dim=-1, keepdim=True)[0] + 1e-8
+        tt_scores = -T_t / max_tt
+        very_negative = -1e9
+        diag_mask = self.task_eye.unsqueeze(0).bool()
+        tt_scores = tt_scores.masked_fill(diag_mask, very_negative)
+        # Mask invalid tasks so padding rows/cols don't leak mass
+        tt_scores = tt_scores.masked_fill(task_mask.unsqueeze(-1) == 0, very_negative)
+        tt_scores = tt_scores.masked_fill(task_mask.unsqueeze(1) == 0, very_negative)
+        T_t_normalized = F.softmax(tt_scores, dim=-1)
+        T_t_normalized = T_t_normalized * task_mask.unsqueeze(-1)
         
         # Combine precedence (directed) and travel (symmetric)
         adj = precedence_matrix + 0.3 * T_t_normalized + 0.3 * T_t_normalized.transpose(-2, -1)
@@ -325,7 +358,7 @@ class MRTAGNNTransformerNetwork(nn.Module):
         
         # ========== Aggregate Features ==========
         
-        aggregate_encoded = self.aggregate_encoder(aggregate_features)  # (batch, hidden_dim//2)
+        aggregate_encoded = self.aggregate_encoder(aggregate_features_norm)  # (batch, hidden_dim//2)
         
         # ========== Final Prediction ==========
         
@@ -509,7 +542,7 @@ def main():
     """Main training script for Hybrid GNN + Transformer model"""
     # Configuration
     DATA_DIR = 'dataset_optimal_8t3r3s'
-    MAX_SAMPLES = 500
+    MAX_SAMPLES = None  # Use full dataset for better generalization
     BATCH_SIZE = 32
     NUM_EPOCHS = 30
     LEARNING_RATE = 0.001
@@ -614,4 +647,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
